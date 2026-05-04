@@ -48,6 +48,12 @@ Refer to the detail workflow
 - GUI confirmation dialog when metadata already exists
 - GUI stop button for cancelling a running job
 - `tqdm`-style progress output in the GUI log area
+- Optional video range selection by frame number or seconds
+- Optional similar-frame review/exclusion for irregular camera movement
+- Optional custom-mask-aware sharpness scoring and mask export
+- Optional YOLO-based object mask generation when `ultralytics` is installed separately
+- Mask-only mode for still images
+- JSON config load/save from CLI and GUI
 
 ## GUI
 <img src="./image/gui.png" alt="GUI Screenshot" width="640" />
@@ -122,6 +128,64 @@ python extract_sharpest_frame.py \
   --analysis-only
 ```
 
+Analyze only a video range:
+
+```bash
+python extract_sharpest_frame.py \
+  --video /path/to/video.mp4 \
+  --start-time 5 \
+  --end-time 30
+```
+
+Review and exclude overly similar selected frames:
+
+```bash
+python extract_sharpest_frame.py \
+  --video /path/to/video.mp4 \
+  --similarity-threshold 0.985
+```
+
+The review is saved as `_similar_frame_review.csv`. Use `--review-similarity-only` to create only the review CSV before extracting frames.
+
+Use a custom mask for sharpness scoring and export matching mask files:
+
+```bash
+python extract_sharpest_frame.py \
+  --video /path/to/video.mp4 \
+  --custom-mask /path/to/mask.png \
+  --save-masks
+```
+
+Generate automatic object masks with YOLO:
+
+```bash
+pip install ultralytics
+python extract_sharpest_frame.py \
+  --video /path/to/video.mp4 \
+  --yolo-model yolov8n-seg.pt \
+  --yolo-classes person,car,bus
+```
+
+Generate masks for still images only:
+
+```bash
+python extract_sharpest_frame.py \
+  --mask-only-images image_001.jpg image_002.jpg \
+  --custom-mask /path/to/mask.png \
+  --mask-output-dir ./masks
+```
+
+Save and load JSON config:
+
+```bash
+python extract_sharpest_frame.py \
+  --video /path/to/video.mp4 \
+  --chunk-size 30 \
+  --save-config config.json
+
+python extract_sharpest_frame.py --config config.json
+```
+
 ## GUI Usage
 
 Start the GUI:
@@ -142,6 +206,8 @@ GUI behavior:
 - Change UI language between English and Japanese
 - Run extraction or analysis-only mode
 - Set worker count for metadata extraction
+- Set a frame range, similarity threshold, custom mask, YOLO model, and extra CLI arguments
+- Save and load GUI settings as JSON config
 - If `_sharpness_metadata.csv` already exists, choose whether to reuse it
 - Stop a running job with the `Stop` button
 - View progress and logs in the log area
@@ -159,13 +225,29 @@ GUI behavior:
 | `--output-pattern` | string | `output_frame_%05d.jpg` | Output filename pattern |
 | `--jpeg-quality` | int or percent | `95` | JPEG quality percentage from `1` to `100` |
 | `--analysis-only` | flag | off | Create metadata only without writing JPEG or PNG files |
+| `--start-frame` | int | `0` | First frame to analyze |
+| `--end-frame` | int | unset | Stop before this frame |
+| `--start-time` | float | unset | Start time in seconds |
+| `--end-time` | float | unset | End time in seconds |
+| `--custom-mask` | string | unset | Static mask image used for sharpness scoring and mask export |
+| `--similarity-threshold` | float | `0` | Drop selected frames whose similarity to the previous kept frame is at or above this threshold |
+| `--review-similarity-only` | flag | off | Write `_similar_frame_review.csv` and skip image extraction |
+| `--save-masks` | flag | off | Save `*_mask.png` files for extracted frames using the custom mask |
+| `--yolo-model` | string | unset | Optional Ultralytics YOLO model path/name for automatic object masks |
+| `--yolo-classes` | string | `person,bicycle,car,motorcycle,bus,truck` | COCO class names or IDs to include in YOLO masks |
+| `--mask-only-images` | strings | unset | Still-image mask-only mode |
+| `--mask-output-dir` | string | `masks` | Output folder for still-image mask-only mode |
+| `--config` | string | unset | Load options from JSON config |
+| `--save-config` | string | unset | Save resolved options to JSON config |
 
 ## Output Files
 
 The tool writes the following files into `--output-dir`:
 
 - `_sharpness_metadata.csv`: frame number and sharpness score for the analyzed video
+- `_similar_frame_review.csv`: similar-frame keep/drop review when enabled
 - `output_frame_00001.jpg`, `output_frame_00002.jpg`, ...: extracted sharp frames
+- `output_frame_00001_mask.png`, `output_frame_00002_mask.png`, ...: optional mask images
 
 ## How It Works
 
@@ -179,6 +261,8 @@ The tool writes the following files into `--output-dir`:
 If metadata already exists, it can be reused instead of analyzing the video again.
 
 When `--workers` is greater than `1`, metadata extraction is split across multiple processes and merged back in original frame order.
+
+YOLO mask generation is optional and requires installing `ultralytics` separately. If a YOLO segmentation model is used, instance masks are written; with detection-only models, bounding-box masks are written.
 
 ## Notes
 
