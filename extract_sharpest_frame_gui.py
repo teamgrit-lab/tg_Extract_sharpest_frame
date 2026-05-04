@@ -12,6 +12,9 @@ from typing import Optional
 from extract_sharpest_frame import PROGRESS_PREFIX
 
 
+LOG_AREA_ROW = 11
+
+
 class ToolTip:
     def __init__(self, widget, text: str = "") -> None:
         self.widget = widget
@@ -251,7 +254,7 @@ class SharpestFrameGui(tk.Tk):
         self.rowconfigure(0, weight=1)
         root.columnconfigure(1, weight=1)
         root.columnconfigure(3, weight=1)
-        root.rowconfigure(11, weight=1)
+        root.rowconfigure(LOG_AREA_ROW, weight=1)
 
         self.language_label = ttk.Label(root)
         self.language_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 12))
@@ -360,7 +363,7 @@ class SharpestFrameGui(tk.Tk):
         self.extra_args_entry.grid(row=10, column=1, columnspan=3, sticky="ew", pady=6)
 
         options_frame = ttk.Frame(root)
-        options_frame.grid(row=11, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        options_frame.grid(row=LOG_AREA_ROW, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
         options_frame.columnconfigure(0, weight=1)
         options_frame.rowconfigure(1, weight=1)
 
@@ -685,7 +688,8 @@ class SharpestFrameGui(tk.Tk):
         }
         for key, variable in mapping.items():
             if key in config:
-                variable.set(defaults.get(key, "") if config[key] is None else str(config[key]))
+                value = defaults.get(key, "") if config[key] is None else str(config[key])
+                variable.set(value)
         for key, variable in {
             "analysis_only": self.analysis_only,
             "review_similarity_only": self.review_similarity_only,

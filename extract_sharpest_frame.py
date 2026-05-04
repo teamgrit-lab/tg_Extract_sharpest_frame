@@ -26,6 +26,7 @@ PROGRESS_PREFIX = "[progress] "
 SPINNER_FRAMES = "|/-\\"
 MULTIPROCESS_PROGRESS_INTERVAL = 0.2
 SUPPORTED_OUTPUT_FORMATS = ("png", "jpg")
+# COCO classes commonly useful for SfM masks that remove moving foreground objects.
 DEFAULT_YOLO_CLASSES = "person,bicycle,car,motorcycle,bus,truck"
 COCO_CLASS_IDS = {
     "person": 0,
@@ -538,6 +539,7 @@ def signature_similarity(previous, current) -> float:
     if previous.shape != current.shape:
         current = cv2.resize(current, (previous.shape[1], previous.shape[0]), interpolation=cv2.INTER_AREA)
     difference = cv2.absdiff(previous, current)
+    # Convert mean pixel difference to a normalized similarity score where 1.0 is identical.
     return 1.0 - (float(difference.mean()) / 255.0)
 
 
@@ -555,7 +557,7 @@ def review_similar_frames(
     if threshold <= 0 or len(frame_numbers) <= 1:
         return frame_numbers
     if threshold > 1:
-        raise SharpestFrameError("--similarity-threshold must be between 0 and 1.")
+        raise SharpestFrameError("--similarity-threshold must be greater than 0 and less than or equal to 1.")
 
     capture = cv2.VideoCapture(str(video_file))
     if not capture.isOpened():
@@ -692,7 +694,11 @@ def parse_yolo_class_filter(class_names: str) -> Optional[set]:
         elif name in COCO_CLASS_IDS:
             class_ids.add(COCO_CLASS_IDS[name])
         else:
-            raise SharpestFrameError(f"Unknown YOLO class name: {name}")
+            valid_names = ", ".join(COCO_CLASS_IDS.keys())
+            raise SharpestFrameError(
+                f"Unknown YOLO class name: {name}. "
+                f"Valid names include: {valid_names}; numeric class IDs are also supported."
+            )
     return class_ids
 
 
@@ -1024,7 +1030,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Extract sharp frames from a video without the ffmpeg executable."
     )
-    parser.add_argument("--video", help="Input video file path")
+    parser.add_argument("--video", help="Input video file path; required unless --mask-only-images is used")
     parser.add_argument(
         "--chunk-size",
         type=int,
@@ -1146,7 +1152,11 @@ def apply_config(args, parser: argparse.ArgumentParser, argv: List[str]) -> None
     if not isinstance(config, dict):
         raise SharpestFrameError("Config file must contain a JSON object.")
 
-    actions = {action.dest: action for action in parser._actions if action.dest != "help"}
+    actions = {
+        action.dest: action
+        for action in parser._option_string_actions.values()
+        if action.dest != "help"
+    }
     for key, value in config.items():
         if key not in actions:
             continue
