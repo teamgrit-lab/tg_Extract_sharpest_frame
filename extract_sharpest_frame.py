@@ -218,6 +218,7 @@ def analyze_video_range(
     end_frame: int,
     scale_width: int,
     custom_mask_path: Optional[str] = None,
+    custom_mask_data=None,
 ) -> List[Tuple[int, float]]:
     ensure_opencv_available()
 
@@ -225,7 +226,10 @@ def analyze_video_range(
     if not capture.isOpened():
         raise SharpestFrameError(f"Failed to open video: {video_path}")
 
-    custom_mask = load_custom_mask(Path(custom_mask_path)) if custom_mask_path else None
+    if custom_mask_data is not None:
+        custom_mask = cv2.imdecode(custom_mask_data, cv2.IMREAD_GRAYSCALE)
+    else:
+        custom_mask = load_custom_mask(Path(custom_mask_path)) if custom_mask_path else None
     capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     results: List[Tuple[int, float]] = []
     frame_number = start_frame
@@ -311,6 +315,13 @@ def analyze_video_multi_process(
     spinner_index = 0
     last_progress_refresh = 0.0
 
+    custom_mask_data = None
+    if custom_mask_path is not None:
+        custom_mask = load_custom_mask(custom_mask_path)
+        encoded, custom_mask_data = cv2.imencode(".png", custom_mask)
+        if not encoded:
+            custom_mask_data = None
+
     try:
         with metadata_path.open("w", newline="", encoding="utf-8") as metadata_file:
             writer = csv.writer(metadata_file)
@@ -326,6 +337,7 @@ def analyze_video_multi_process(
                             end_frame,
                             scale_width,
                             str(custom_mask_path) if custom_mask_path else None,
+                            custom_mask_data,
                         ): index
                         for index, (start_frame, end_frame) in enumerate(ranges)
                     }
@@ -704,25 +716,19 @@ def yolo_mask_for_image(image, model, class_filter: Optional[set]):
     height, width = image.shape[:2]
 
     if getattr(result, "masks", None) is not None and result.masks is not None:
-        mask = cv2.resize(
-            result.masks.data.cpu().numpy().max(axis=0).astype("uint8") * 255,
-            (width, height),
-            interpolation=cv2.INTER_NEAREST,
-        )
-        if class_filter is not None and getattr(result, "boxes", None) is not None:
-            filtered = None
+        classes = None
+        if getattr(result, "boxes", None) is not None:
             classes = result.boxes.cls.cpu().numpy().astype("int")
-            masks = result.masks.data.cpu().numpy()
-            for index, class_id in enumerate(classes):
-                if class_id not in class_filter:
-                    continue
-                instance_mask = cv2.resize(
-                    masks[index].astype("uint8") * 255,
-                    (width, height),
-                    interpolation=cv2.INTER_NEAREST,
-                )
-                filtered = instance_mask if filtered is None else cv2.bitwise_or(filtered, instance_mask)
-            mask = filtered
+        masks = result.masks.data.cpu().numpy()
+        for index, instance in enumerate(masks):
+            if class_filter is not None and classes is not None and classes[index] not in class_filter:
+                continue
+            instance_mask = cv2.resize(
+                instance.astype("uint8") * 255,
+                (width, height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            mask = instance_mask if mask is None else cv2.bitwise_or(mask, instance_mask)
     elif getattr(result, "boxes", None) is not None:
         mask = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         mask[:, :] = 0
@@ -811,7 +817,10 @@ def generate_masks_for_still_images(
         image = cv2.imread(str(image_file))
         if image is None:
             raise SharpestFrameError(f"Failed to read image: {image_file}")
-        mask = yolo_mask_for_image(image, model, class_filter) if model is not None else resize_mask_for_frame(static_mask, image.shape)
+        if model is not None:
+            mask = yolo_mask_for_image(image, model, class_filter)
+        else:
+            mask = resize_mask_for_frame(static_mask, image.shape)
         write_mask(mask, output_dir_path / f"{image_file.stem}_mask.png")
     emit(f"Done: Masks were written to {output_dir_path.resolve()}", logger)
 

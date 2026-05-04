@@ -86,6 +86,7 @@ TRANSLATIONS = {
         "select_video": "Select a video file.",
         "select_output": "Select an output folder.",
         "invalid_integer": "Please enter a valid integer for {field}.",
+        "invalid_number": "Please enter a valid number for {field}.",
         "done": "Completed successfully.",
         "cancelled": "Processing was cancelled.",
         "failed": "Processing failed",
@@ -159,6 +160,7 @@ TRANSLATIONS = {
         "select_video": "動画ファイルを選択してください。",
         "select_output": "出力フォルダを選択してください。",
         "invalid_integer": "{field} には整数を入力してください。",
+        "invalid_number": "{field} には数値を入力してください。",
         "done": "処理が完了しました。",
         "cancelled": "処理を中断しました。",
         "failed": "処理に失敗しました",
@@ -766,7 +768,7 @@ class SharpestFrameGui(tk.Tk):
         try:
             float(normalized)
         except ValueError as exc:
-            raise ValueError(self.t("invalid_integer").format(field=self.t(field_key))) from exc
+            raise ValueError(self.t("invalid_number").format(field=self.t(field_key))) from exc
         return normalized
 
     def _parse_jpeg_quality(self, value: str) -> str:
