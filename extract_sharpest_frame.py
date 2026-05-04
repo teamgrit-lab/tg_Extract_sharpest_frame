@@ -396,12 +396,8 @@ def analyze_video(
 
     video_total_frames = get_frame_count(probe_capture)
     probe_capture.release()
-    if final_frame is None:
-        final_frame = video_total_frames
-    if final_frame is not None:
-        total_frames = max(0, final_frame - first_frame)
-    else:
-        total_frames = None
+    effective_final_frame = final_frame if final_frame is not None else video_total_frames
+    total_frames = max(0, effective_final_frame - first_frame) if effective_final_frame is not None else None
 
     if workers <= 1 or total_frames is None or total_frames <= 1:
         frame_number = analyze_video_single_process(
@@ -749,6 +745,7 @@ def generate_masks_for_video_frames(
             capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             ok, frame = capture.read()
             if not ok:
+                emit(f"Warning: Could not read frame {frame_number}; mask was not generated.", logger)
                 progress_bar.update(1)
                 continue
 
@@ -908,12 +905,12 @@ def run_extraction(
         emit(f"Using video range: frames {first_frame} to {end_label}", logger)
 
     raise_if_cancelled(should_cancel)
-    force_metadata_regeneration = custom_mask_path is not None or first_frame != 0 or final_frame is not None
+    metadata_regeneration_required = custom_mask_path is not None or first_frame != 0 or final_frame is not None
 
-    if metadata_path.exists() and reuse_metadata and not force_metadata_regeneration:
+    if metadata_path.exists() and reuse_metadata and not metadata_regeneration_required:
         emit(f"Using existing sharpness metadata: {metadata_path}", logger)
     else:
-        if metadata_path.exists() and force_metadata_regeneration:
+        if metadata_path.exists() and metadata_regeneration_required:
             emit(f"Regenerating sharpness metadata for the current range/mask options: {metadata_path}", logger)
         elif metadata_path.exists() and not reuse_metadata:
             emit(f"Regenerating sharpness metadata: {metadata_path}", logger)

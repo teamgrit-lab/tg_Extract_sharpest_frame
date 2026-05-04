@@ -57,6 +57,7 @@ TRANSLATIONS = {
         "browse_video": "Browse...",
         "output_dir": "Output folder",
         "browse_output": "Browse...",
+        "browse_mask": "Browse...",
         "chunk_size": "Chunk size",
         "scale_width": "Scale width",
         "workers": "Workers",
@@ -129,6 +130,7 @@ TRANSLATIONS = {
         "browse_video": "参照...",
         "output_dir": "出力フォルダ",
         "browse_output": "参照...",
+        "browse_mask": "参照...",
         "chunk_size": "チャンクサイズ",
         "scale_width": "解析幅",
         "workers": "ワーカー数",
@@ -440,7 +442,7 @@ class SharpestFrameGui(tk.Tk):
         self.analysis_checkbox.configure(text=self.t("analysis_only"))
         self.advanced_label.configure(text=self.t("advanced_options"))
         self.mask_label.configure(text=self.t("custom_mask"))
-        self.mask_button.configure(text=self.t("browse_video"))
+        self.mask_button.configure(text=self.t("browse_mask"))
         self.yolo_label.configure(text=self.t("yolo_model"))
         self.start_frame_label.configure(text=self.t("start_frame"))
         self.end_frame_label.configure(text=self.t("end_frame"))
