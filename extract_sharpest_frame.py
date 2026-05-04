@@ -894,6 +894,8 @@ def run_extraction(
     custom_mask_path = Path(custom_mask) if custom_mask else None
     if custom_mask_path is not None and not custom_mask_path.exists():
         raise SharpestFrameError(f"Custom mask was not found: {custom_mask_path}")
+    if save_masks and custom_mask_path is None and yolo_model is None:
+        raise SharpestFrameError("--save-masks requires --custom-mask or --yolo-model.")
     first_frame, final_frame = resolve_video_range(
         video_file,
         start_frame=start_frame,
@@ -906,11 +908,14 @@ def run_extraction(
         emit(f"Using video range: frames {first_frame} to {end_label}", logger)
 
     raise_if_cancelled(should_cancel)
+    force_metadata_regeneration = custom_mask_path is not None or first_frame != 0 or final_frame is not None
 
-    if metadata_path.exists() and reuse_metadata:
+    if metadata_path.exists() and reuse_metadata and not force_metadata_regeneration:
         emit(f"Using existing sharpness metadata: {metadata_path}", logger)
     else:
-        if metadata_path.exists() and not reuse_metadata:
+        if metadata_path.exists() and force_metadata_regeneration:
+            emit(f"Regenerating sharpness metadata for the current range/mask options: {metadata_path}", logger)
+        elif metadata_path.exists() and not reuse_metadata:
             emit(f"Regenerating sharpness metadata: {metadata_path}", logger)
         else:
             emit(f"Generating sharpness metadata: {metadata_path}", logger)
