@@ -26,7 +26,7 @@ PROGRESS_PREFIX = "[progress] "
 SPINNER_FRAMES = "|/-\\"
 MULTIPROCESS_PROGRESS_INTERVAL = 0.2
 SUPPORTED_OUTPUT_FORMATS = ("png", "jpg")
-# COCO classes commonly useful for SfM masks that remove moving foreground objects.
+# COCO classes commonly useful for Structure from Motion (SfM) masks that remove moving foreground objects.
 DEFAULT_YOLO_CLASSES = "person,bicycle,car,motorcycle,bus,truck"
 COCO_CLASS_IDS = {
     "person": 0,
@@ -539,7 +539,7 @@ def signature_similarity(previous, current) -> float:
     if previous.shape != current.shape:
         current = cv2.resize(current, (previous.shape[1], previous.shape[0]), interpolation=cv2.INTER_AREA)
     difference = cv2.absdiff(previous, current)
-    # Convert mean pixel difference to a normalized similarity score where 1.0 is identical.
+    # Convert 8-bit grayscale mean pixel difference to normalized similarity, where 1.0 is identical.
     return 1.0 - (float(difference.mean()) / 255.0)
 
 
@@ -690,6 +690,7 @@ def parse_yolo_class_filter(class_names: str) -> Optional[set]:
     class_ids = set()
     for name in names:
         if name.isdigit():
+            # Numeric IDs are accepted for custom YOLO models whose class lists may differ from COCO.
             class_ids.add(int(name))
         elif name in COCO_CLASS_IDS:
             class_ids.add(COCO_CLASS_IDS[name])
@@ -1161,6 +1162,7 @@ def apply_config(args, parser: argparse.ArgumentParser, argv: List[str]) -> None
         if key not in actions:
             continue
         option_strings = actions[key].option_strings
+        # Command-line options take precedence over values loaded from config.
         if any(option_was_provided(option, argv) for option in option_strings):
             continue
         setattr(args, key, value)
