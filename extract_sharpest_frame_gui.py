@@ -665,9 +665,25 @@ class SharpestFrameGui(tk.Tk):
             "yolo_model": self.yolo_model,
             "extra_args": self.extra_args,
         }
+        defaults = {
+            "video": "",
+            "output_dir": "sharp_frames",
+            "chunk_size": "30",
+            "scale_width": "1920",
+            "workers": "4",
+            "output_pattern": "output_frame_%05d.png",
+            "output_format": "png",
+            "jpeg_quality": "95",
+            "custom_mask": "",
+            "start_frame": "0",
+            "end_frame": "",
+            "similarity_threshold": "0",
+            "yolo_model": "",
+            "extra_args": "",
+        }
         for key, variable in mapping.items():
             if key in config:
-                variable.set("" if config[key] is None else str(config[key]))
+                variable.set(defaults.get(key, "") if config[key] is None else str(config[key]))
         for key, variable in {
             "analysis_only": self.analysis_only,
             "review_similarity_only": self.review_similarity_only,

@@ -595,6 +595,35 @@ def review_similar_frames(
     return kept_frames
 
 
+def build_metadata_context(
+    scale_width: int,
+    first_frame: int,
+    final_frame: Optional[int],
+    custom_mask_path: Optional[Path],
+) -> Dict[str, object]:
+    return {
+        "scale_width": scale_width,
+        "first_frame": first_frame,
+        "final_frame": final_frame,
+        "custom_mask": str(custom_mask_path.resolve()) if custom_mask_path is not None else None,
+    }
+
+
+def metadata_context_matches(context_path: Path, expected_context: Dict[str, object]) -> bool:
+    try:
+        with context_path.open("r", encoding="utf-8") as context_file:
+            existing_context = json.load(context_file)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return existing_context == expected_context
+
+
+def write_metadata_context(context_path: Path, context: Dict[str, object]) -> None:
+    with context_path.open("w", encoding="utf-8") as context_file:
+        json.dump(context, context_file, indent=2, ensure_ascii=False)
+        context_file.write("\n")
+
+
 def format_output_filename(output_pattern: str, output_index: int, output_format: str) -> str:
     try:
         output_name = output_pattern % output_index
@@ -888,6 +917,7 @@ def run_extraction(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     metadata_path = output_dir_path / "_sharpness_metadata.csv"
+    metadata_context_path = output_dir_path / "_sharpness_metadata.json"
     custom_mask_path = Path(custom_mask) if custom_mask else None
     if custom_mask_path is not None and not custom_mask_path.exists():
         raise SharpestFrameError(f"Custom mask was not found: {custom_mask_path}")
@@ -905,13 +935,14 @@ def run_extraction(
         emit(f"Using video range: frames {first_frame} to {end_label}", logger)
 
     raise_if_cancelled(should_cancel)
-    metadata_regeneration_required = custom_mask_path is not None or first_frame != 0 or final_frame is not None
+    metadata_context = build_metadata_context(scale_width, first_frame, final_frame, custom_mask_path)
+    metadata_reusable = metadata_context_matches(metadata_context_path, metadata_context)
 
-    if metadata_path.exists() and reuse_metadata and not metadata_regeneration_required:
+    if metadata_path.exists() and reuse_metadata and metadata_reusable:
         emit(f"Using existing sharpness metadata: {metadata_path}", logger)
     else:
-        if metadata_path.exists() and metadata_regeneration_required:
-            emit(f"Regenerating sharpness metadata for the current range/mask options: {metadata_path}", logger)
+        if metadata_path.exists() and reuse_metadata and not metadata_reusable:
+            emit(f"Regenerating sharpness metadata because analysis options changed: {metadata_path}", logger)
         elif metadata_path.exists() and not reuse_metadata:
             emit(f"Regenerating sharpness metadata: {metadata_path}", logger)
         else:
@@ -927,6 +958,7 @@ def run_extraction(
             logger=logger,
             should_cancel=should_cancel,
         )
+        write_metadata_context(metadata_context_path, metadata_context)
 
     if analysis_only:
         emit("Done: Sharpness metadata is available.", logger)
@@ -1120,7 +1152,7 @@ def save_config(args, config_path: str) -> None:
     config = {
         key: value
         for key, value in vars(args).items()
-        if key not in excluded and value is not None
+        if key not in excluded
     }
     output_path = Path(config_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

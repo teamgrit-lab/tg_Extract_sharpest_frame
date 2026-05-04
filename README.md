@@ -245,6 +245,7 @@ GUI behavior:
 The tool writes the following files into `--output-dir`:
 
 - `_sharpness_metadata.csv`: frame number and sharpness score for the analyzed video
+- `_sharpness_metadata.json`: analysis options used to determine whether metadata can be safely reused
 - `_similar_frame_review.csv`: similar-frame keep/drop review when enabled
 - `output_frame_00001.jpg`, `output_frame_00002.jpg`, ...: extracted sharp frames
 - `output_frame_00001_mask.png`, `output_frame_00002_mask.png`, ...: optional mask images
