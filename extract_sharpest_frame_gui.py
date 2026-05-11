@@ -1,4 +1,6 @@
+import json
 import queue
+import shlex
 import subprocess
 import sys
 import threading
@@ -8,6 +10,9 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 from extract_sharpest_frame import PROGRESS_PREFIX
+
+
+LOG_SECTION_ROW = 12
 
 
 class ToolTip:
@@ -55,6 +60,7 @@ TRANSLATIONS = {
         "browse_video": "Browse...",
         "output_dir": "Output folder",
         "browse_output": "Browse...",
+        "browse_mask": "Browse...",
         "chunk_size": "Chunk size",
         "scale_width": "Scale width",
         "workers": "Workers",
@@ -62,6 +68,19 @@ TRANSLATIONS = {
         "output_format": "Output format",
         "jpeg_quality": "JPEG quality (%)",
         "analysis_only": "Analysis only",
+        "advanced_options": "Advanced options",
+        "custom_mask": "Custom mask",
+        "start_frame": "Start frame",
+        "end_frame": "End frame",
+        "similarity_threshold": "Similarity threshold",
+        "review_similarity_only": "Review similar only",
+        "save_masks": "Save masks",
+        "mask_output_dir": "Mask output folder",
+        "mask_retries": "Mask retries",
+        "yolo_model": "YOLO model",
+        "extra_args": "Extra CLI args",
+        "load_config": "Load config",
+        "save_config": "Save config",
         "run": "Run",
         "stop": "Stop",
         "running": "Running...",
@@ -72,6 +91,7 @@ TRANSLATIONS = {
         "select_video": "Select a video file.",
         "select_output": "Select an output folder.",
         "invalid_integer": "Please enter a valid integer for {field}.",
+        "invalid_number": "Please enter a valid number for {field}.",
         "done": "Completed successfully.",
         "cancelled": "Processing was cancelled.",
         "failed": "Processing failed",
@@ -81,6 +101,9 @@ TRANSLATIONS = {
         "close_dialog_message": "A CLI process is still running. Force stop it and close the window?",
         "browse_video_title": "Select a video file",
         "browse_output_title": "Select an output folder",
+        "browse_mask_title": "Select a mask image",
+        "load_config_title": "Load config",
+        "save_config_title": "Save config",
         "lang_en": "English",
         "lang_ja": "Japanese",
         "tip_language": "Switch the UI language.",
@@ -93,6 +116,16 @@ TRANSLATIONS = {
         "tip_output_format": "Choose PNG or JPG for extracted frames.",
         "tip_jpeg_quality": "JPEG save quality. Used only when Output format is JPG.",
         "tip_analysis_only": "Only create sharpness metadata without saving extracted frames.",
+        "tip_custom_mask": "Static mask image used for mask-aware sharpness and optional mask export.",
+        "tip_video_range": "Analyze only this frame range. Leave end empty to continue to the end.",
+        "tip_similarity_threshold": "Drop selected frames with similarity above this value. Use 0 to disable.",
+        "tip_review_similarity_only": "Create the similar-frame review CSV without extracting images.",
+        "tip_save_masks": "Save mask PNG files next to extracted frames.",
+        "tip_mask_output_dir": "Folder for mask PNG output. Relative paths are created under the Output folder.",
+        "tip_mask_retries": "Retry count for YOLO mask generation and mask file writes.",
+        "tip_yolo_model": "Optional Ultralytics YOLO model name/path, such as yolo11m-seg.pt.",
+        "tip_extra_args": "Additional CLI arguments for advanced features.",
+        "tip_config": "Load or save the current GUI options as JSON.",
         "tip_clear_log": "Clear the log output shown below.",
         "tip_stop": "Stop the running extraction process.",
         "tip_run": "Start analysis and extract the sharpest frame from each chunk.",
@@ -105,6 +138,7 @@ TRANSLATIONS = {
         "browse_video": "参照...",
         "output_dir": "出力フォルダ",
         "browse_output": "参照...",
+        "browse_mask": "参照...",
         "chunk_size": "チャンクサイズ",
         "scale_width": "解析幅",
         "workers": "ワーカー数",
@@ -112,6 +146,19 @@ TRANSLATIONS = {
         "output_format": "出力形式",
         "jpeg_quality": "JPEG品質 (%)",
         "analysis_only": "解析のみ",
+        "advanced_options": "詳細オプション",
+        "custom_mask": "カスタムマスク",
+        "start_frame": "開始フレーム",
+        "end_frame": "終了フレーム",
+        "similarity_threshold": "類似度しきい値",
+        "review_similarity_only": "類似確認のみ",
+        "save_masks": "マスク保存",
+        "mask_output_dir": "マスク出力フォルダ",
+        "mask_retries": "マスクリトライ回数",
+        "yolo_model": "YOLOモデル",
+        "extra_args": "追加CLI引数",
+        "load_config": "設定読込",
+        "save_config": "設定保存",
         "run": "実行",
         "stop": "停止",
         "running": "実行中...",
@@ -122,6 +169,7 @@ TRANSLATIONS = {
         "select_video": "動画ファイルを選択してください。",
         "select_output": "出力フォルダを選択してください。",
         "invalid_integer": "{field} には整数を入力してください。",
+        "invalid_number": "{field} には数値を入力してください。",
         "done": "処理が完了しました。",
         "cancelled": "処理を中断しました。",
         "failed": "処理に失敗しました",
@@ -131,6 +179,9 @@ TRANSLATIONS = {
         "close_dialog_message": "CLI の子プロセスがまだ実行中です。強制停止してウィンドウを閉じますか？",
         "browse_video_title": "動画ファイルを選択",
         "browse_output_title": "出力フォルダを選択",
+        "browse_mask_title": "マスク画像を選択",
+        "load_config_title": "設定を読み込む",
+        "save_config_title": "設定を保存",
         "lang_en": "英語",
         "lang_ja": "日本語",
         "tip_language": "GUI の表示言語を切り替えます。",
@@ -143,6 +194,16 @@ TRANSLATIONS = {
         "tip_output_format": "切り出し画像の形式を PNG または JPG から選びます。",
         "tip_jpeg_quality": "JPEG 保存品質です。出力形式が JPG のときだけ使われます。",
         "tip_analysis_only": "画像は保存せず、シャープネスメタデータだけ作成します。",
+        "tip_custom_mask": "シャープネス解析とマスク保存に使う静的マスク画像です。",
+        "tip_video_range": "このフレーム範囲だけ解析します。終了を空にすると最後まで処理します。",
+        "tip_similarity_threshold": "この値以上に似ている選択フレームを除外します。0で無効です。",
+        "tip_review_similarity_only": "画像抽出せずに類似フレーム確認CSVだけ作成します。",
+        "tip_save_masks": "抽出フレームの横にマスクPNGを保存します。",
+        "tip_mask_output_dir": "マスクPNGの出力先です。相対パスの場合は出力フォルダ配下に作成します。",
+        "tip_mask_retries": "YOLOマスク生成とマスク保存の再試行回数です。",
+        "tip_yolo_model": "yolo11m-seg.pt など、任意の Ultralytics YOLO モデル名/パスです。",
+        "tip_extra_args": "高度な機能用の追加CLI引数です。",
+        "tip_config": "現在のGUI設定をJSONとして読み込み/保存します。",
         "tip_clear_log": "下のログ表示を消去します。",
         "tip_stop": "実行中の抽出処理を停止します。",
         "tip_run": "解析を開始し、各チャンクから最もシャープなフレームを抽出します。",
@@ -164,6 +225,16 @@ class SharpestFrameGui(tk.Tk):
         self.output_format = tk.StringVar(value="png")
         self.jpeg_quality = tk.StringVar(value="95")
         self.analysis_only = tk.BooleanVar(value=False)
+        self.custom_mask = tk.StringVar()
+        self.start_frame = tk.StringVar(value="0")
+        self.end_frame = tk.StringVar()
+        self.similarity_threshold = tk.StringVar(value="0")
+        self.review_similarity_only = tk.BooleanVar(value=False)
+        self.save_masks = tk.BooleanVar(value=False)
+        self.mask_output_dir = tk.StringVar(value="masks")
+        self.mask_retries = tk.StringVar(value="2")
+        self.yolo_model = tk.StringVar(value="yolo11m-seg.pt")
+        self.extra_args = tk.StringVar()
         self.status_text = tk.StringVar()
         self.log_queue = None
         self.worker_process: Optional[subprocess.Popen] = None
@@ -193,7 +264,7 @@ class SharpestFrameGui(tk.Tk):
         self.rowconfigure(0, weight=1)
         root.columnconfigure(1, weight=1)
         root.columnconfigure(3, weight=1)
-        root.rowconfigure(6, weight=1)
+        root.rowconfigure(LOG_SECTION_ROW, weight=1)
 
         self.language_label = ttk.Label(root)
         self.language_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 12))
@@ -258,8 +329,61 @@ class SharpestFrameGui(tk.Tk):
         self.jpeg_quality_entry = ttk.Entry(root, textvariable=self.jpeg_quality)
         self.jpeg_quality_entry.grid(row=5, column=3, sticky="ew", pady=6)
 
+        self.advanced_label = ttk.Label(root)
+        self.advanced_label.grid(row=6, column=0, sticky="w", padx=(0, 8), pady=(12, 6))
+        config_frame = ttk.Frame(root)
+        config_frame.grid(row=6, column=3, sticky="e", pady=(12, 6))
+        self.load_config_button = ttk.Button(config_frame, command=self._load_config)
+        self.load_config_button.grid(row=0, column=0, padx=(0, 8))
+        self.save_config_button = ttk.Button(config_frame, command=self._save_config)
+        self.save_config_button.grid(row=0, column=1)
+
+        self.mask_label = ttk.Label(root)
+        self.mask_label.grid(row=7, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.mask_entry = ttk.Entry(root, textvariable=self.custom_mask)
+        self.mask_entry.grid(row=7, column=1, sticky="ew", pady=6)
+        self.mask_button = ttk.Button(root, command=self._browse_mask)
+        self.mask_button.grid(row=7, column=2, sticky="ew", padx=(8, 8), pady=6)
+        self.yolo_label = ttk.Label(root)
+        self.yolo_label.grid(row=6, column=1, sticky="e", padx=(0, 8), pady=(12, 6))
+        self.yolo_entry = ttk.Entry(root, textvariable=self.yolo_model)
+        self.yolo_entry.grid(row=6, column=2, sticky="ew", pady=(12, 6))
+
+        self.mask_output_label = ttk.Label(root)
+        self.mask_output_label.grid(row=9, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.mask_output_entry = ttk.Entry(root, textvariable=self.mask_output_dir)
+        self.mask_output_entry.grid(row=9, column=1, sticky="ew", pady=6)
+
+        self.start_frame_label = ttk.Label(root)
+        self.start_frame_label.grid(row=8, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.start_frame_entry = ttk.Entry(root, textvariable=self.start_frame)
+        self.start_frame_entry.grid(row=8, column=1, sticky="ew", pady=6)
+        self.end_frame_label = ttk.Label(root)
+        self.end_frame_label.grid(row=8, column=2, sticky="w", padx=(16, 8), pady=6)
+        self.end_frame_entry = ttk.Entry(root, textvariable=self.end_frame)
+        self.end_frame_entry.grid(row=8, column=3, sticky="ew", pady=6)
+
+        self.similarity_label = ttk.Label(root)
+        self.similarity_label.grid(row=10, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.similarity_entry = ttk.Entry(root, textvariable=self.similarity_threshold)
+        self.similarity_entry.grid(row=10, column=1, sticky="ew", pady=6)
+        self.review_checkbox = ttk.Checkbutton(root, variable=self.review_similarity_only)
+        self.review_checkbox.grid(row=10, column=2, sticky="w", padx=(16, 8), pady=6)
+        self.save_masks_checkbox = ttk.Checkbutton(root, variable=self.save_masks)
+        self.save_masks_checkbox.grid(row=10, column=3, sticky="w", pady=6)
+
+        self.mask_retries_label = ttk.Label(root)
+        self.mask_retries_label.grid(row=9, column=2, sticky="w", padx=(16, 8), pady=6)
+        self.mask_retries_entry = ttk.Entry(root, textvariable=self.mask_retries)
+        self.mask_retries_entry.grid(row=9, column=3, sticky="ew", pady=6)
+
+        self.extra_args_label = ttk.Label(root)
+        self.extra_args_label.grid(row=11, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.extra_args_entry = ttk.Entry(root, textvariable=self.extra_args)
+        self.extra_args_entry.grid(row=11, column=1, columnspan=3, sticky="ew", pady=6)
+
         options_frame = ttk.Frame(root)
-        options_frame.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        options_frame.grid(row=LOG_SECTION_ROW, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
         options_frame.columnconfigure(0, weight=1)
         options_frame.rowconfigure(1, weight=1)
 
@@ -287,7 +411,7 @@ class SharpestFrameGui(tk.Tk):
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
         self.status_label = ttk.Label(root, textvariable=self.status_text)
-        self.status_label.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.status_label.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
         self._create_tooltips()
 
@@ -311,6 +435,19 @@ class SharpestFrameGui(tk.Tk):
         self._set_tooltip("output_format_combo", self.output_format_combo, "tip_output_format")
         self._set_tooltip("jpeg_quality_entry", self.jpeg_quality_entry, "tip_jpeg_quality")
         self._set_tooltip("analysis_checkbox", self.analysis_checkbox, "tip_analysis_only")
+        self._set_tooltip("mask_entry", self.mask_entry, "tip_custom_mask")
+        self._set_tooltip("mask_button", self.mask_button, "tip_custom_mask")
+        self._set_tooltip("mask_output_entry", self.mask_output_entry, "tip_mask_output_dir")
+        self._set_tooltip("start_frame_entry", self.start_frame_entry, "tip_video_range")
+        self._set_tooltip("end_frame_entry", self.end_frame_entry, "tip_video_range")
+        self._set_tooltip("similarity_entry", self.similarity_entry, "tip_similarity_threshold")
+        self._set_tooltip("review_checkbox", self.review_checkbox, "tip_review_similarity_only")
+        self._set_tooltip("save_masks_checkbox", self.save_masks_checkbox, "tip_save_masks")
+        self._set_tooltip("mask_retries_entry", self.mask_retries_entry, "tip_mask_retries")
+        self._set_tooltip("yolo_entry", self.yolo_entry, "tip_yolo_model")
+        self._set_tooltip("extra_args_entry", self.extra_args_entry, "tip_extra_args")
+        self._set_tooltip("load_config_button", self.load_config_button, "tip_config")
+        self._set_tooltip("save_config_button", self.save_config_button, "tip_config")
         self._set_tooltip("clear_button", self.clear_button, "tip_clear_log")
         self._set_tooltip("stop_button", self.stop_button, "tip_stop")
         self._set_tooltip("run_button", self.run_button, "tip_run")
@@ -330,6 +467,20 @@ class SharpestFrameGui(tk.Tk):
         self.output_format_label.configure(text=self.t("output_format"))
         self.jpeg_quality_label.configure(text=self.t("jpeg_quality"))
         self.analysis_checkbox.configure(text=self.t("analysis_only"))
+        self.advanced_label.configure(text=self.t("advanced_options"))
+        self.mask_label.configure(text=self.t("custom_mask"))
+        self.mask_button.configure(text=self.t("browse_mask"))
+        self.mask_output_label.configure(text=self.t("mask_output_dir"))
+        self.yolo_label.configure(text=self.t("yolo_model"))
+        self.start_frame_label.configure(text=self.t("start_frame"))
+        self.end_frame_label.configure(text=self.t("end_frame"))
+        self.similarity_label.configure(text=self.t("similarity_threshold"))
+        self.review_checkbox.configure(text=self.t("review_similarity_only"))
+        self.save_masks_checkbox.configure(text=self.t("save_masks"))
+        self.mask_retries_label.configure(text=self.t("mask_retries"))
+        self.extra_args_label.configure(text=self.t("extra_args"))
+        self.load_config_button.configure(text=self.t("load_config"))
+        self.save_config_button.configure(text=self.t("save_config"))
         self.run_button.configure(text=self.t("run"))
         self.stop_button.configure(text=self.t("stop"))
         self.clear_button.configure(text=self.t("clear_log"))
@@ -360,6 +511,16 @@ class SharpestFrameGui(tk.Tk):
         jpeg_quality: str,
         analysis_only: bool,
         reuse_metadata: bool,
+        custom_mask: str,
+        mask_output_dir: str,
+        mask_retries: int,
+        start_frame: int,
+        end_frame: Optional[int],
+        similarity_threshold: str,
+        review_similarity_only: bool,
+        save_masks: bool,
+        yolo_model: str,
+        extra_args: str,
     ) -> list[str]:
         base_dir = self._get_app_base_dir()
         if getattr(sys, "frozen", False):
@@ -400,6 +561,26 @@ class SharpestFrameGui(tk.Tk):
 
         if not reuse_metadata:
             command.append("--regenerate-metadata")
+
+        if custom_mask:
+            command.extend(["--custom-mask", custom_mask])
+        if mask_output_dir:
+            command.extend(["--mask-output-dir", mask_output_dir])
+        command.extend(["--mask-retries", str(mask_retries)])
+        if start_frame > 0:
+            command.extend(["--start-frame", str(start_frame)])
+        if end_frame is not None:
+            command.extend(["--end-frame", str(end_frame)])
+        if similarity_threshold and float(similarity_threshold) > 0:
+            command.extend(["--similarity-threshold", similarity_threshold])
+        if review_similarity_only:
+            command.append("--review-similarity-only")
+        if save_masks:
+            command.append("--save-masks")
+        if yolo_model:
+            command.extend(["--yolo-model", yolo_model])
+        if extra_args:
+            command.extend(shlex.split(extra_args))
 
         return command
 
@@ -475,6 +656,107 @@ class SharpestFrameGui(tk.Tk):
         if selected:
             self.output_dir.set(selected)
 
+    def _browse_mask(self) -> None:
+        selected = filedialog.askopenfilename(title=self.t("browse_mask_title"))
+        if selected:
+            self.custom_mask.set(selected)
+
+    def _snapshot_config(self) -> dict:
+        return {
+            "video": self.video_path.get(),
+            "output_dir": self.output_dir.get(),
+            "chunk_size": self.chunk_size.get(),
+            "scale_width": self.scale_width.get(),
+            "workers": self.workers.get(),
+            "output_pattern": self.output_pattern.get(),
+            "output_format": self.output_format.get(),
+            "jpeg_quality": self.jpeg_quality.get(),
+            "analysis_only": self.analysis_only.get(),
+            "custom_mask": self.custom_mask.get(),
+            "mask_output_dir": self.mask_output_dir.get(),
+            "mask_retries": self.mask_retries.get(),
+            "start_frame": self.start_frame.get(),
+            "end_frame": self.end_frame.get(),
+            "similarity_threshold": self.similarity_threshold.get(),
+            "review_similarity_only": self.review_similarity_only.get(),
+            "save_masks": self.save_masks.get(),
+            "yolo_model": self.yolo_model.get(),
+            "extra_args": self.extra_args.get(),
+        }
+
+    def _apply_config(self, config: dict) -> None:
+        mapping = {
+            "video": self.video_path,
+            "output_dir": self.output_dir,
+            "chunk_size": self.chunk_size,
+            "scale_width": self.scale_width,
+            "workers": self.workers,
+            "output_pattern": self.output_pattern,
+            "output_format": self.output_format,
+            "jpeg_quality": self.jpeg_quality,
+            "custom_mask": self.custom_mask,
+            "mask_output_dir": self.mask_output_dir,
+            "mask_retries": self.mask_retries,
+            "start_frame": self.start_frame,
+            "end_frame": self.end_frame,
+            "similarity_threshold": self.similarity_threshold,
+            "yolo_model": self.yolo_model,
+            "extra_args": self.extra_args,
+        }
+        defaults = {
+            "video": "",
+            "output_dir": "sharp_frames",
+            "chunk_size": "30",
+            "scale_width": "1920",
+            "workers": "4",
+            "output_pattern": "output_frame_%05d.png",
+            "output_format": "png",
+            "jpeg_quality": "95",
+            "custom_mask": "",
+            "mask_output_dir": "masks",
+            "mask_retries": "2",
+            "start_frame": "0",
+            "end_frame": "",
+            "similarity_threshold": "0",
+            "yolo_model": "yolo11m-seg.pt",
+            "extra_args": "",
+        }
+        for key, variable in mapping.items():
+            if key in config:
+                value = defaults.get(key, "") if config[key] is None else str(config[key])
+                variable.set(value)
+        for key, variable in {
+            "analysis_only": self.analysis_only,
+            "review_similarity_only": self.review_similarity_only,
+            "save_masks": self.save_masks,
+        }.items():
+            if key in config:
+                variable.set(bool(config[key]))
+
+    def _load_config(self) -> None:
+        selected = filedialog.askopenfilename(title=self.t("load_config_title"), filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not selected:
+            return
+        try:
+            with Path(selected).open("r", encoding="utf-8") as config_file:
+                config = json.load(config_file)
+            if not isinstance(config, dict):
+                raise ValueError("Config must be a JSON object.")
+            self._apply_config(config)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            messagebox.showerror(self.t("failed"), str(exc))
+
+    def _save_config(self) -> None:
+        selected = filedialog.asksaveasfilename(title=self.t("save_config_title"), defaultextension=".json", filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+        if not selected:
+            return
+        try:
+            with Path(selected).open("w", encoding="utf-8") as config_file:
+                json.dump(self._snapshot_config(), config_file, indent=2, ensure_ascii=False)
+                config_file.write("\n")
+        except OSError as exc:
+            messagebox.showerror(self.t("failed"), str(exc))
+
     def _clear_log(self) -> None:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", tk.END)
@@ -512,6 +794,21 @@ class SharpestFrameGui(tk.Tk):
             return int(value)
         except ValueError as exc:
             raise ValueError(self.t("invalid_integer").format(field=self.t(field_key))) from exc
+
+    def _parse_optional_int(self, value: str, field_key: str) -> Optional[int]:
+        if not value:
+            return None
+        return self._parse_int(value, field_key)
+
+    def _parse_float_text(self, value: str, field_key: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            return "0"
+        try:
+            float(normalized)
+        except ValueError as exc:
+            raise ValueError(self.t("invalid_number").format(field=self.t(field_key))) from exc
+        return normalized
 
     def _parse_jpeg_quality(self, value: str) -> str:
         normalized = value.strip()
@@ -561,6 +858,11 @@ class SharpestFrameGui(tk.Tk):
         self.run_button.configure(state=edit_state)
         self.video_button.configure(state=edit_state)
         self.output_button.configure(state=edit_state)
+        self.mask_button.configure(state=edit_state)
+        self.mask_output_entry.configure(state=edit_state)
+        self.mask_retries_entry.configure(state=edit_state)
+        self.load_config_button.configure(state=edit_state)
+        self.save_config_button.configure(state=edit_state)
         self.language_combo.configure(state="disabled" if running else "readonly")
         self.stop_button.configure(state="normal" if running else "disabled")
         self.status_text.set(self.t("running") if running else self.t("ready"))
@@ -600,6 +902,10 @@ class SharpestFrameGui(tk.Tk):
             scale_width = self._parse_int(self.scale_width.get().strip(), "scale_width")
             workers = self._parse_int(self.workers.get().strip(), "workers")
             jpeg_quality = self._parse_jpeg_quality(self.jpeg_quality.get()) if self.output_format.get() == "jpg" else "95"
+            mask_retries = self._parse_int(self.mask_retries.get().strip(), "mask_retries")
+            start_frame = self._parse_int(self.start_frame.get().strip() or "0", "start_frame")
+            end_frame = self._parse_optional_int(self.end_frame.get().strip(), "end_frame")
+            similarity_threshold = self._parse_float_text(self.similarity_threshold.get(), "similarity_threshold")
         except ValueError as exc:
             messagebox.showerror(self.t("failed"), str(exc))
             return
@@ -631,6 +937,16 @@ class SharpestFrameGui(tk.Tk):
                 jpeg_quality=jpeg_quality,
                 analysis_only=self.analysis_only.get(),
                 reuse_metadata=reuse_metadata,
+                custom_mask=self.custom_mask.get().strip(),
+                mask_output_dir=self.mask_output_dir.get().strip(),
+                mask_retries=mask_retries,
+                start_frame=start_frame,
+                end_frame=end_frame,
+                similarity_threshold=similarity_threshold,
+                review_similarity_only=self.review_similarity_only.get(),
+                save_masks=self.save_masks.get(),
+                yolo_model=self.yolo_model.get().strip(),
+                extra_args=self.extra_args.get().strip(),
             )
         except FileNotFoundError as exc:
             self._set_running_state(False)
