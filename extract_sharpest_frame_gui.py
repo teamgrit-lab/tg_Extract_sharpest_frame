@@ -12,7 +12,7 @@ from typing import Optional
 from extract_sharpest_frame import PROGRESS_PREFIX
 
 
-LOG_SECTION_ROW = 11
+LOG_SECTION_ROW = 12
 
 
 class ToolTip:
@@ -75,6 +75,8 @@ TRANSLATIONS = {
         "similarity_threshold": "Similarity threshold",
         "review_similarity_only": "Review similar only",
         "save_masks": "Save masks",
+        "mask_output_dir": "Mask output folder",
+        "mask_retries": "Mask retries",
         "yolo_model": "YOLO model",
         "extra_args": "Extra CLI args",
         "load_config": "Load config",
@@ -119,7 +121,9 @@ TRANSLATIONS = {
         "tip_similarity_threshold": "Drop selected frames with similarity above this value. Use 0 to disable.",
         "tip_review_similarity_only": "Create the similar-frame review CSV without extracting images.",
         "tip_save_masks": "Save mask PNG files next to extracted frames.",
-        "tip_yolo_model": "Optional Ultralytics YOLO model name/path, such as yolov8n-seg.pt.",
+        "tip_mask_output_dir": "Folder for mask PNG output. Relative paths are created under the Output folder.",
+        "tip_mask_retries": "Retry count for YOLO mask generation and mask file writes.",
+        "tip_yolo_model": "Optional Ultralytics YOLO model name/path, such as yolo11m-seg.pt.",
         "tip_extra_args": "Additional CLI arguments for advanced features.",
         "tip_config": "Load or save the current GUI options as JSON.",
         "tip_clear_log": "Clear the log output shown below.",
@@ -149,6 +153,8 @@ TRANSLATIONS = {
         "similarity_threshold": "類似度しきい値",
         "review_similarity_only": "類似確認のみ",
         "save_masks": "マスク保存",
+        "mask_output_dir": "マスク出力フォルダ",
+        "mask_retries": "マスクリトライ回数",
         "yolo_model": "YOLOモデル",
         "extra_args": "追加CLI引数",
         "load_config": "設定読込",
@@ -193,7 +199,9 @@ TRANSLATIONS = {
         "tip_similarity_threshold": "この値以上に似ている選択フレームを除外します。0で無効です。",
         "tip_review_similarity_only": "画像抽出せずに類似フレーム確認CSVだけ作成します。",
         "tip_save_masks": "抽出フレームの横にマスクPNGを保存します。",
-        "tip_yolo_model": "yolov8n-seg.pt など、任意の Ultralytics YOLO モデル名/パスです。",
+        "tip_mask_output_dir": "マスクPNGの出力先です。相対パスの場合は出力フォルダ配下に作成します。",
+        "tip_mask_retries": "YOLOマスク生成とマスク保存の再試行回数です。",
+        "tip_yolo_model": "yolo11m-seg.pt など、任意の Ultralytics YOLO モデル名/パスです。",
         "tip_extra_args": "高度な機能用の追加CLI引数です。",
         "tip_config": "現在のGUI設定をJSONとして読み込み/保存します。",
         "tip_clear_log": "下のログ表示を消去します。",
@@ -223,7 +231,9 @@ class SharpestFrameGui(tk.Tk):
         self.similarity_threshold = tk.StringVar(value="0")
         self.review_similarity_only = tk.BooleanVar(value=False)
         self.save_masks = tk.BooleanVar(value=False)
-        self.yolo_model = tk.StringVar()
+        self.mask_output_dir = tk.StringVar(value="masks")
+        self.mask_retries = tk.StringVar(value="2")
+        self.yolo_model = tk.StringVar(value="yolo11m-seg.pt")
         self.extra_args = tk.StringVar()
         self.status_text = tk.StringVar()
         self.log_queue = None
@@ -339,6 +349,11 @@ class SharpestFrameGui(tk.Tk):
         self.yolo_entry = ttk.Entry(root, textvariable=self.yolo_model)
         self.yolo_entry.grid(row=6, column=2, sticky="ew", pady=(12, 6))
 
+        self.mask_output_label = ttk.Label(root)
+        self.mask_output_label.grid(row=9, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.mask_output_entry = ttk.Entry(root, textvariable=self.mask_output_dir)
+        self.mask_output_entry.grid(row=9, column=1, sticky="ew", pady=6)
+
         self.start_frame_label = ttk.Label(root)
         self.start_frame_label.grid(row=8, column=0, sticky="w", padx=(0, 8), pady=6)
         self.start_frame_entry = ttk.Entry(root, textvariable=self.start_frame)
@@ -349,18 +364,23 @@ class SharpestFrameGui(tk.Tk):
         self.end_frame_entry.grid(row=8, column=3, sticky="ew", pady=6)
 
         self.similarity_label = ttk.Label(root)
-        self.similarity_label.grid(row=9, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.similarity_label.grid(row=10, column=0, sticky="w", padx=(0, 8), pady=6)
         self.similarity_entry = ttk.Entry(root, textvariable=self.similarity_threshold)
-        self.similarity_entry.grid(row=9, column=1, sticky="ew", pady=6)
+        self.similarity_entry.grid(row=10, column=1, sticky="ew", pady=6)
         self.review_checkbox = ttk.Checkbutton(root, variable=self.review_similarity_only)
-        self.review_checkbox.grid(row=9, column=2, sticky="w", padx=(16, 8), pady=6)
+        self.review_checkbox.grid(row=10, column=2, sticky="w", padx=(16, 8), pady=6)
         self.save_masks_checkbox = ttk.Checkbutton(root, variable=self.save_masks)
-        self.save_masks_checkbox.grid(row=9, column=3, sticky="w", pady=6)
+        self.save_masks_checkbox.grid(row=10, column=3, sticky="w", pady=6)
+
+        self.mask_retries_label = ttk.Label(root)
+        self.mask_retries_label.grid(row=9, column=2, sticky="w", padx=(16, 8), pady=6)
+        self.mask_retries_entry = ttk.Entry(root, textvariable=self.mask_retries)
+        self.mask_retries_entry.grid(row=9, column=3, sticky="ew", pady=6)
 
         self.extra_args_label = ttk.Label(root)
-        self.extra_args_label.grid(row=10, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.extra_args_label.grid(row=11, column=0, sticky="w", padx=(0, 8), pady=6)
         self.extra_args_entry = ttk.Entry(root, textvariable=self.extra_args)
-        self.extra_args_entry.grid(row=10, column=1, columnspan=3, sticky="ew", pady=6)
+        self.extra_args_entry.grid(row=11, column=1, columnspan=3, sticky="ew", pady=6)
 
         options_frame = ttk.Frame(root)
         options_frame.grid(row=LOG_SECTION_ROW, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
@@ -391,7 +411,7 @@ class SharpestFrameGui(tk.Tk):
         self.log_text.configure(yscrollcommand=scrollbar.set)
 
         self.status_label = ttk.Label(root, textvariable=self.status_text)
-        self.status_label.grid(row=12, column=0, columnspan=4, sticky="ew", pady=(12, 0))
+        self.status_label.grid(row=13, column=0, columnspan=4, sticky="ew", pady=(12, 0))
 
         self._create_tooltips()
 
@@ -417,11 +437,13 @@ class SharpestFrameGui(tk.Tk):
         self._set_tooltip("analysis_checkbox", self.analysis_checkbox, "tip_analysis_only")
         self._set_tooltip("mask_entry", self.mask_entry, "tip_custom_mask")
         self._set_tooltip("mask_button", self.mask_button, "tip_custom_mask")
+        self._set_tooltip("mask_output_entry", self.mask_output_entry, "tip_mask_output_dir")
         self._set_tooltip("start_frame_entry", self.start_frame_entry, "tip_video_range")
         self._set_tooltip("end_frame_entry", self.end_frame_entry, "tip_video_range")
         self._set_tooltip("similarity_entry", self.similarity_entry, "tip_similarity_threshold")
         self._set_tooltip("review_checkbox", self.review_checkbox, "tip_review_similarity_only")
         self._set_tooltip("save_masks_checkbox", self.save_masks_checkbox, "tip_save_masks")
+        self._set_tooltip("mask_retries_entry", self.mask_retries_entry, "tip_mask_retries")
         self._set_tooltip("yolo_entry", self.yolo_entry, "tip_yolo_model")
         self._set_tooltip("extra_args_entry", self.extra_args_entry, "tip_extra_args")
         self._set_tooltip("load_config_button", self.load_config_button, "tip_config")
@@ -448,12 +470,14 @@ class SharpestFrameGui(tk.Tk):
         self.advanced_label.configure(text=self.t("advanced_options"))
         self.mask_label.configure(text=self.t("custom_mask"))
         self.mask_button.configure(text=self.t("browse_mask"))
+        self.mask_output_label.configure(text=self.t("mask_output_dir"))
         self.yolo_label.configure(text=self.t("yolo_model"))
         self.start_frame_label.configure(text=self.t("start_frame"))
         self.end_frame_label.configure(text=self.t("end_frame"))
         self.similarity_label.configure(text=self.t("similarity_threshold"))
         self.review_checkbox.configure(text=self.t("review_similarity_only"))
         self.save_masks_checkbox.configure(text=self.t("save_masks"))
+        self.mask_retries_label.configure(text=self.t("mask_retries"))
         self.extra_args_label.configure(text=self.t("extra_args"))
         self.load_config_button.configure(text=self.t("load_config"))
         self.save_config_button.configure(text=self.t("save_config"))
@@ -488,6 +512,8 @@ class SharpestFrameGui(tk.Tk):
         analysis_only: bool,
         reuse_metadata: bool,
         custom_mask: str,
+        mask_output_dir: str,
+        mask_retries: int,
         start_frame: int,
         end_frame: Optional[int],
         similarity_threshold: str,
@@ -538,6 +564,9 @@ class SharpestFrameGui(tk.Tk):
 
         if custom_mask:
             command.extend(["--custom-mask", custom_mask])
+        if mask_output_dir:
+            command.extend(["--mask-output-dir", mask_output_dir])
+        command.extend(["--mask-retries", str(mask_retries)])
         if start_frame > 0:
             command.extend(["--start-frame", str(start_frame)])
         if end_frame is not None:
@@ -644,6 +673,8 @@ class SharpestFrameGui(tk.Tk):
             "jpeg_quality": self.jpeg_quality.get(),
             "analysis_only": self.analysis_only.get(),
             "custom_mask": self.custom_mask.get(),
+            "mask_output_dir": self.mask_output_dir.get(),
+            "mask_retries": self.mask_retries.get(),
             "start_frame": self.start_frame.get(),
             "end_frame": self.end_frame.get(),
             "similarity_threshold": self.similarity_threshold.get(),
@@ -664,6 +695,8 @@ class SharpestFrameGui(tk.Tk):
             "output_format": self.output_format,
             "jpeg_quality": self.jpeg_quality,
             "custom_mask": self.custom_mask,
+            "mask_output_dir": self.mask_output_dir,
+            "mask_retries": self.mask_retries,
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
             "similarity_threshold": self.similarity_threshold,
@@ -680,10 +713,12 @@ class SharpestFrameGui(tk.Tk):
             "output_format": "png",
             "jpeg_quality": "95",
             "custom_mask": "",
+            "mask_output_dir": "masks",
+            "mask_retries": "2",
             "start_frame": "0",
             "end_frame": "",
             "similarity_threshold": "0",
-            "yolo_model": "",
+            "yolo_model": "yolo11m-seg.pt",
             "extra_args": "",
         }
         for key, variable in mapping.items():
@@ -824,6 +859,8 @@ class SharpestFrameGui(tk.Tk):
         self.video_button.configure(state=edit_state)
         self.output_button.configure(state=edit_state)
         self.mask_button.configure(state=edit_state)
+        self.mask_output_entry.configure(state=edit_state)
+        self.mask_retries_entry.configure(state=edit_state)
         self.load_config_button.configure(state=edit_state)
         self.save_config_button.configure(state=edit_state)
         self.language_combo.configure(state="disabled" if running else "readonly")
@@ -865,6 +902,7 @@ class SharpestFrameGui(tk.Tk):
             scale_width = self._parse_int(self.scale_width.get().strip(), "scale_width")
             workers = self._parse_int(self.workers.get().strip(), "workers")
             jpeg_quality = self._parse_jpeg_quality(self.jpeg_quality.get()) if self.output_format.get() == "jpg" else "95"
+            mask_retries = self._parse_int(self.mask_retries.get().strip(), "mask_retries")
             start_frame = self._parse_int(self.start_frame.get().strip() or "0", "start_frame")
             end_frame = self._parse_optional_int(self.end_frame.get().strip(), "end_frame")
             similarity_threshold = self._parse_float_text(self.similarity_threshold.get(), "similarity_threshold")
@@ -900,6 +938,8 @@ class SharpestFrameGui(tk.Tk):
                 analysis_only=self.analysis_only.get(),
                 reuse_metadata=reuse_metadata,
                 custom_mask=self.custom_mask.get().strip(),
+                mask_output_dir=self.mask_output_dir.get().strip(),
+                mask_retries=mask_retries,
                 start_frame=start_frame,
                 end_frame=end_frame,
                 similarity_threshold=similarity_threshold,

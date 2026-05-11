@@ -683,6 +683,21 @@ def format_mask_filename(output_pattern: str, output_index: int) -> str:
     return f"{output_path.stem}_mask.png"
 
 
+def resolve_output_subdir(base_output_dir: Path, configured_dir: Optional[str], default_name: str) -> Path:
+    if configured_dir:
+        candidate = Path(configured_dir)
+        if candidate.is_absolute():
+            return candidate
+        return base_output_dir / candidate
+    return base_output_dir / default_name
+
+
+def create_blank_mask(image):
+    blank_mask = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blank_mask[:, :] = 0
+    return blank_mask
+
+
 def parse_yolo_class_filter(class_names: str) -> Optional[set]:
     names = [name.strip().lower() for name in str(class_names).split(",") if name.strip()]
     if not names:
@@ -709,16 +724,18 @@ def import_yolo():
     except ImportError as exc:
         raise SharpestFrameError(
             "YOLO mask generation requires the optional ultralytics package. "
-            "Install it separately with: pip install ultralytics"
+            "Install it into the same Python used to run this app with: "
+            f"{sys.executable} -m pip install ultralytics. "
+            "If you started the GUI manually, launch it with that same interpreter."
         ) from exc
     return YOLO
 
 
-def yolo_mask_for_image(image, model, class_filter: Optional[set]):
+def yolo_mask_for_image(image, model, class_filter: Optional[set]) -> Tuple[Optional[object], str]:
     mask = None
     results = model.predict(image, verbose=False)
     if not results:
-        return None
+        return None, "YOLO returned no detections."
     result = results[0]
     height, width = image.shape[:2]
 
@@ -727,26 +744,61 @@ def yolo_mask_for_image(image, model, class_filter: Optional[set]):
         if getattr(result, "boxes", None) is not None:
             classes = result.boxes.cls.cpu().numpy().astype("int")
         masks = result.masks.data.cpu().numpy()
+        matched_instances = 0
         for index, instance in enumerate(masks):
             if class_filter is not None and classes is not None and classes[index] not in class_filter:
                 continue
+            matched_instances += 1
             instance_mask = cv2.resize(
                 instance.astype("uint8") * 255,
                 (width, height),
                 interpolation=cv2.INTER_NEAREST,
             )
             mask = instance_mask if mask is None else cv2.bitwise_or(mask, instance_mask)
+        if matched_instances == 0:
+            return None, "YOLO segmentation found no masks for the selected classes."
+        return mask, f"YOLO segmentation produced {matched_instances} mask(s)."
     elif getattr(result, "boxes", None) is not None:
-        mask = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        mask[:, :] = 0
+        mask = create_blank_mask(image)
+        matched_boxes = 0
         for box in result.boxes:
             class_id = int(box.cls.cpu().numpy()[0])
             if class_filter is not None and class_id not in class_filter:
                 continue
+            matched_boxes += 1
             x1, y1, x2, y2 = [int(value) for value in box.xyxy.cpu().numpy()[0]]
             cv2.rectangle(mask, (x1, y1), (x2, y2), 255, thickness=-1)
+        if matched_boxes == 0:
+            return None, "YOLO detection found no boxes for the selected classes."
+        return mask, f"YOLO detection produced {matched_boxes} box mask(s)."
 
-    return mask
+    return None, "YOLO result did not contain masks or boxes."
+
+
+def predict_yolo_mask_with_retries(
+    image,
+    model,
+    class_filter: Optional[set],
+    item_label: str,
+    retry_count: int,
+    logger: Logger = None,
+) -> Tuple[Optional[object], str]:
+    total_attempts = max(1, retry_count + 1)
+    last_error = None
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            return yolo_mask_for_image(image, model, class_filter)
+        except Exception as exc:
+            last_error = exc
+            if attempt < total_attempts:
+                emit(
+                    f"Warning: YOLO mask generation failed for {item_label} "
+                    f"(attempt {attempt}/{total_attempts}): {exc}. Retrying...",
+                    logger,
+                )
+
+    return None, f"YOLO mask generation failed for {item_label} after {total_attempts} attempts: {last_error}"
 
 
 def write_mask(mask, output_file: Path) -> None:
@@ -757,6 +809,31 @@ def write_mask(mask, output_file: Path) -> None:
         raise SharpestFrameError(f"Failed to write mask: {output_file}")
 
 
+def write_mask_with_retries(mask, output_file: Path, retry_count: int, logger: Logger = None) -> bool:
+    total_attempts = max(1, retry_count + 1)
+    last_error = None
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            write_mask(mask, output_file)
+            return True
+        except SharpestFrameError as exc:
+            last_error = exc
+            if attempt < total_attempts:
+                emit(
+                    f"Warning: Failed to write mask {output_file} "
+                    f"(attempt {attempt}/{total_attempts}): {exc}. Retrying...",
+                    logger,
+                )
+
+    emit(
+        f"Warning: Failed to write mask after {total_attempts} attempts: {output_file}. "
+        f"Last error: {last_error}",
+        logger,
+    )
+    return False
+
+
 def generate_masks_for_video_frames(
     video_file: Path,
     frame_numbers: List[int],
@@ -765,6 +842,7 @@ def generate_masks_for_video_frames(
     custom_mask_path: Optional[Path] = None,
     yolo_model: Optional[str] = None,
     yolo_classes: str = DEFAULT_YOLO_CLASSES,
+    retry_count: int = 2,
     logger: Logger = None,
     should_cancel: CancelChecker = None,
 ) -> None:
@@ -781,6 +859,9 @@ def generate_masks_for_video_frames(
         raise SharpestFrameError(f"Failed to open video: {video_file}")
 
     emit(f"Generating masks... ({len(frame_numbers)} frames)", logger)
+    written_count = 0
+    blank_count = 0
+    skipped_count = 0
     with create_progress(total=len(frame_numbers), desc="Mask", logger=logger) as progress_bar:
         for output_index, frame_number in enumerate(sorted(set(frame_numbers)), start=1):
             raise_if_cancelled(should_cancel)
@@ -788,17 +869,43 @@ def generate_masks_for_video_frames(
             ok, frame = capture.read()
             if not ok:
                 emit(f"Warning: Could not read frame {frame_number}; mask was not generated.", logger)
+                skipped_count += 1
                 progress_bar.update(1)
                 continue
 
+            output_file = output_dir / format_mask_filename(output_pattern, output_index)
             if model is not None:
-                mask = yolo_mask_for_image(frame, model, class_filter)
+                mask, reason = predict_yolo_mask_with_retries(
+                    frame,
+                    model,
+                    class_filter,
+                    item_label=f"frame {frame_number}",
+                    retry_count=retry_count,
+                    logger=logger,
+                )
+                if mask is None:
+                    blank_count += 1
+                    emit(
+                        f"Warning: No YOLO mask for frame {frame_number}. {reason} "
+                        f"Saving a blank mask instead: {output_file}",
+                        logger,
+                    )
+                    mask = create_blank_mask(frame)
             else:
                 mask = resize_mask_for_frame(custom_mask, frame.shape)
-            write_mask(mask, output_dir / format_mask_filename(output_pattern, output_index))
+
+            if write_mask_with_retries(mask, output_file, retry_count=retry_count, logger=logger):
+                written_count += 1
+            else:
+                skipped_count += 1
             progress_bar.update(1)
 
     capture.release()
+    emit(
+        f"Mask generation summary: wrote {written_count} file(s), blank fallback {blank_count}, skipped {skipped_count}.",
+        logger,
+    )
+    emit(f"Mask output directory: {output_dir.resolve()}", logger)
 
 
 def generate_masks_for_still_images(
@@ -807,6 +914,7 @@ def generate_masks_for_still_images(
     custom_mask: Optional[str] = None,
     yolo_model: Optional[str] = None,
     yolo_classes: str = DEFAULT_YOLO_CLASSES,
+    retry_count: int = 2,
     logger: Logger = None,
 ) -> None:
     if not custom_mask and not yolo_model:
@@ -825,10 +933,28 @@ def generate_masks_for_still_images(
         if image is None:
             raise SharpestFrameError(f"Failed to read image: {image_file}")
         if model is not None:
-            mask = yolo_mask_for_image(image, model, class_filter)
+            mask, reason = predict_yolo_mask_with_retries(
+                image,
+                model,
+                class_filter,
+                item_label=str(image_file),
+                retry_count=retry_count,
+                logger=logger,
+            )
+            if mask is None:
+                emit(
+                    f"Warning: No YOLO mask for {image_file}. {reason} Saving a blank mask instead.",
+                    logger,
+                )
+                mask = create_blank_mask(image)
         else:
             mask = resize_mask_for_frame(static_mask, image.shape)
-        write_mask(mask, output_dir_path / f"{image_file.stem}_mask.png")
+        write_mask_with_retries(
+            mask,
+            output_dir_path / f"{image_file.stem}_mask.png",
+            retry_count=retry_count,
+            logger=logger,
+        )
     emit(f"Done: Masks were written to {output_dir_path.resolve()}", logger)
 
 
@@ -908,6 +1034,8 @@ def run_extraction(
     save_masks: bool = False,
     yolo_model: Optional[str] = None,
     yolo_classes: str = DEFAULT_YOLO_CLASSES,
+    mask_output_dir: Optional[str] = "masks",
+    mask_retries: int = 2,
     logger: Logger = None,
     should_cancel: CancelChecker = None,
 ) -> Tuple[Path, List[int]]:
@@ -929,9 +1057,13 @@ def run_extraction(
 
     output_format = normalize_output_format(output_format)
     jpeg_quality = parse_jpeg_quality_value(jpeg_quality)
+    if mask_retries < 0:
+        raise SharpestFrameError("--mask-retries must be 0 or greater.")
 
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
+    frame_output_dir = output_dir_path / "frames"
+    mask_output_dir_path = resolve_output_subdir(output_dir_path, mask_output_dir, "masks")
     metadata_path = output_dir_path / "_sharpness_metadata.csv"
     metadata_context_path = output_dir_path / "_sharpness_metadata.json"
     custom_mask_path = Path(custom_mask) if custom_mask else None
@@ -1002,7 +1134,7 @@ def run_extraction(
     extract_frames(
         video_file=video_file,
         frame_numbers=best_frames,
-        output_dir=output_dir_path,
+        output_dir=frame_output_dir,
         output_pattern=output_pattern,
         jpeg_quality=jpeg_quality,
         output_format=output_format,
@@ -1013,17 +1145,21 @@ def run_extraction(
         generate_masks_for_video_frames(
             video_file=video_file,
             frame_numbers=best_frames,
-            output_dir=output_dir_path,
+            output_dir=mask_output_dir_path,
             output_pattern=output_pattern,
             custom_mask_path=custom_mask_path if save_masks else None,
             yolo_model=yolo_model,
             yolo_classes=yolo_classes,
+            retry_count=mask_retries,
             logger=logger,
             should_cancel=should_cancel,
         )
 
     emit("Done: Sharp frames were extracted successfully.", logger)
     emit(f"Output directory: {output_dir_path.resolve()}", logger)
+    emit(f"Frame output directory: {frame_output_dir.resolve()}", logger)
+    if save_masks or yolo_model:
+        emit(f"Mask output directory: {mask_output_dir_path.resolve()}", logger)
     return metadata_path, best_frames
 
 
@@ -1118,7 +1254,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mask-output-dir",
         default="masks",
-        help="Output folder for --mask-only-images",
+        help="Output folder for masks; in video mode, relative paths are resolved under --output-dir",
+    )
+    parser.add_argument(
+        "--mask-retries",
+        type=int,
+        default=2,
+        help="Retry count for mask inference/write failures before falling back or skipping",
     )
     parser.add_argument("--config", default=None, help="Load options from a JSON config file")
     parser.add_argument("--save-config", default=None, help="Save resolved options to a JSON config file and continue")
@@ -1204,6 +1346,7 @@ def main() -> None:
                 custom_mask=args.custom_mask,
                 yolo_model=args.yolo_model,
                 yolo_classes=args.yolo_classes,
+                retry_count=args.mask_retries,
                 logger=logger,
             )
             return
@@ -1233,6 +1376,8 @@ def main() -> None:
             save_masks=args.save_masks,
             yolo_model=args.yolo_model,
             yolo_classes=args.yolo_classes,
+            mask_output_dir=args.mask_output_dir,
+            mask_retries=args.mask_retries,
             logger=logger,
         )
     except SharpestFrameError as exc:

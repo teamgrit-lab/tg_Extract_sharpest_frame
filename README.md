@@ -52,6 +52,7 @@ Refer to the detail workflow
 - Optional similar-frame review/exclusion for irregular camera movement
 - Optional custom-mask-aware sharpness scoring and mask export
 - Optional YOLO-based object mask generation when `ultralytics` is installed separately
+- YOLO mask generation logs per-frame no-detection/fallback details and continues with empty-mask fallbacks
 - Mask-only mode for still images
 - JSON config load/save from CLI and GUI
 
@@ -236,7 +237,8 @@ GUI behavior:
 | `--yolo-model` | string | unset | Optional Ultralytics YOLO model path/name for automatic object masks |
 | `--yolo-classes` | string | `person,bicycle,car,motorcycle,bus,truck` | COCO class names or IDs to include in YOLO masks |
 | `--mask-only-images` | strings | unset | Still-image mask-only mode |
-| `--mask-output-dir` | string | `masks` | Output folder for still-image mask-only mode |
+| `--mask-output-dir` | string | `masks` | Output folder for masks; in video mode, a relative path is resolved under `--output-dir` |
+| `--mask-retries` | int | `2` | Retry count for YOLO mask inference/write failures before blank fallback or skip |
 | `--config` | string | unset | Load options from JSON config |
 | `--save-config` | string | unset | Save resolved options to JSON config |
 
@@ -247,8 +249,8 @@ The tool writes the following files into `--output-dir`:
 - `_sharpness_metadata.csv`: frame number and sharpness score for the analyzed video
 - `_sharpness_metadata.json`: analysis options used to determine whether metadata can be safely reused
 - `_similar_frame_review.csv`: similar-frame keep/drop review when enabled
-- `output_frame_00001.jpg`, `output_frame_00002.jpg`, ...: extracted sharp frames
-- `output_frame_00001_mask.png`, `output_frame_00002_mask.png`, ...: optional mask images
+- `frames/output_frame_00001.jpg`, `frames/output_frame_00002.jpg`, ...: extracted sharp frames
+- `masks/output_frame_00001_mask.png`, `masks/output_frame_00002_mask.png`, ...: optional mask images
 
 ## How It Works
 
@@ -263,7 +265,7 @@ If metadata already exists, it can be reused instead of analyzing the video agai
 
 When `--workers` is greater than `1`, metadata extraction is split across multiple processes and merged back in original frame order.
 
-YOLO mask generation is optional and requires installing `ultralytics` separately. If a YOLO segmentation model is used, instance masks are written; with detection-only models, bounding-box masks are written.
+YOLO mask generation is optional and requires installing `ultralytics` separately. If a YOLO segmentation model is used, instance masks are written; with detection-only models, bounding-box masks are written. When YOLO finds no matching object for a frame, the tool logs the reason and writes an empty mask instead of aborting the whole run.
 
 ## Notes
 
